@@ -514,8 +514,8 @@ SPU SPU_inst
 	.inputL( SPU_INL ) ,		// input  inputL
 	.inputR( SPU_INR ) ,		// input  inputR
 	
-	.AOUTL( SPU_AOUTL ) ,	// output [15:0] AOUTL
-	.AOUTR( SPU_AOUTR ) ,	// output [15:0] AOUTR
+	.AOUTL( AOUTL ) ,	// output [15:0] AOUTL
+	.AOUTR( AOUTR ) ,	// output [15:0] AOUTR
 	.VALIDOUT( VALIDOUT )	// output  VALIDOUT
 );
 
@@ -531,9 +531,17 @@ wire [15:0] SPU_CD_INR;
 wire [15:0] SPU_INL;
 wire [15:0] SPU_INR;
 
-wire [15:0] SPU_AOUTL;
-wire [15:0] SPU_AOUTR;
+wire [15:0] AOUTL;
+wire [15:0] AOUTR;
 
+
+reg [15:0] SPU_AOUTL;
+reg [15:0] SPU_AOUTR;
+always @(posedge clk_sys)
+if (VALIDOUT) begin
+	SPU_AOUTL <= AOUTL;
+	SPU_AOUTR <= AOUTR;
+end
 
 assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
