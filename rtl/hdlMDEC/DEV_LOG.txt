@@ -1,0 +1,318 @@
+27/01/2019 :	Started to think about feasibility of PS1 on MiSTer.
+
+				Problem : need a lot of stuff, don't feel like starting that huge work alone without data.
+				CPU already exist anway.
+				Better to focus on custom chip.
+				Everybody like CPU / GPU.
+				Is there something that can be done, a single module, 'closed' independent thing ?
+				
+				--> MDEC.
+				
+				Look up specs, found JPSXDEC and PlayStation1_STR_format.txt
+				
+				Looked at the different stage.
+				
+28/01/2019 :	- Install JPSXDEC, download FF7 movie STR file from the internet, export .mdec stream from JPSXDEC.
+MDEC			- Wrote a small parser of the U16 stream to parse the stream, nothing fancy.
+					BASE IDEA : Get a full C implementation that is working like the HW module will.
+				- Second Idea : get a MDEC implementation from an emulator ! And compare my implementation output/computations/error etc...
+					PCSXR Emulator seems ok.
+					(Found out later with this article from JPSXDEC dev, that indeed it was ok : http://jpsxdec.blogspot.com/ )
+				
+				-> Problem : I do not know how to call the MDEC Implementation from PCSXR.
+				-> Problem : Realize that game has to upload the table, empty by default.
+				
+				- Get more indepth information about IDCT, look at how MDEC is working, how different it is from possible standards.
+				- Look at different implementation.
+				
+				In its brute force version, IDCT need basically  1 MUL * 8 * 8 * 8 * 8 = 4096 MUL.
+				Considering we read some kind of RAM Block, it is 4096 cycle for a basic implementation for a 8x8 block.
+				
+				Hypothesis 1 : Do not know the clock of the MDEC in the real HW. I consider it to be the same as the CPU CLOCK for now.
+								33.8 Mhz
+								
+				Hypothesis 2 : Specs says that the MDEC can not process more than 9000 16x16 block per second (300 per frame (30 fps max))
+								made of 6x 8x8 IDCT decompression.
+				
+				Which means that the PS1 need to complete the job in 33.8 Mhz / 9000 = 3755.5 cycle.
+				Let's say we must decode a block in less than 3700 cycles as a work estimate.
+				
+				Basic implementation would then have the following : 4096x6 = 24576 cycles to decode a block.
+				
+				(Of course, I consider that latency is hidden, that architecture is well made to hide that we can load the next stream while finishing decoding of the previous one,
+				as there are multiple stages...)
+				
+30/01/2019 :	Spent the evening looking at more efficient implementation in more detail.
+MDEC			Problem : it exist very very efficient implementation. Highly pipelined, but are huge in resources (27 addition in 32 bit or may be more, 5 MUL).
+				Do not want to eat 'half of the FPGA' for that :-).
+				
+				Found some "resource" friendly parallel brute force but it divide the workload by 2/4. Not enough.
+				(I did not realize at the time, that I had 6 block to decode through the IDCT, I just focused on designing the IDCT itself, reduce its cost from 4096 cycles
+				to 2048 or 1024 but forgot that we ALSO have to do it 6x)
+				
+				But at least now, I have a very clean design on paper, that can cope with the loading, and output of RGB values, hidding all the latency to have consistent
+				throughput even with consistent non stop input stream.
+				
+31/01/2019 :	Realized that I need those x6. Need to go back to the drawing board.
+MDEC
+				Then also decided THE PLAN :
+				- First, drawing board again to fit within cycle budget.
+				- Create now my own C stupid implementation first, with computing path close to my HW (accumulator, multiply -> bit cut, rounding).
+				- Compare to reference PCSXR, make it work fine first.
+				- Then I can go through my C implementation and reduce the bit size of various stages and see how it goes in term of quality in signal.
+				- Then go for hardware implementation.
+				
+				No coding today, may be read a Verilog tutorial.
+				
+02/02/2019 :	Go back to the drawing board.
+MDEC			Can not do brute force 2D. Need 1D + 1D step.
+				Try to write implementation, fails miserably.
+				Lazily try to find already working code : miserably failed.
+				Too many pitfall when taking the code of someone else : index and order of tables, precision rounding places.
+				Call it a day.
+				
+03/02/2019 :	Finally got a working implementation after a stupid TODO I wrote for later "inverse x,y in this to test if works" justed worked.
+MDEC			Now I have a clean 2D Brute force as a reference.
+				And as DCT/IDCT is a separable filter, I now have 1D + 1D brute force pass to optimize and play with.
+				The 1D is not "smart" in itself using butterfly computation and the like.
+				Anyway, now cost is reduce from [1 stage x 8x8x8x8] to [2 stage x 8x8x8] cycles. Down from 4096 to 1024 cycles.
+				
+				PROBLEM A : our budget is 625 cycle per block. (6 per 16x16 Block MDEC stream, 9000 MDEC block / sec @ 33.8 Mhz)
+				Possible techniques :
+				T1 - Make two pass FASTER. (process two computation in // )
+				T2 - Make each pass serial to each other, and each can work on independant data.
+				
+				BOTH SOLUTION PROVIDE a 1024 -> 512 cycle computation time => TIMING REQUIREMENT MET.
+				
+				PROBLEM B : The choice of T1 or T2 depends on PSX MDEC DMA transfer timing and how the BUSY bit are used.
+							Need to understand the specs, IF SUCH THING EXIST !
+							Would be very nice to see a movie streamed under oscilloscope.
+							Uuuhhhh, don't know mips, don't know DMA or any other thing on PSX HW. Feeling alone again.
+							
+				Study Verilog a bit.
+
+04/02/2019 :	Took a bit of work at the C reference implementation of the computation to be sure.
+MDEC			In //, OPTIMIZATION C must be clearly defined (Comment from my C implementation) :
+				
+				POSSIBLE PARAMETERS / BIT SIZE :
+				--------------------------------
+				Optimization A,B,C Orthogonal :
+				
+				[Signed INPUT is 10 bit] x [Unsigned Scale 6 bit] x [Quantize Matrix (7 bit)] >> 3 => 23-3 = 20 LSB.
+				We div by 8 to have signal at proper size.
+				
+				C1 - Trunc / 8 as define by original code to have data at correct range.
+				   OR
+				C2 - Keep precision further down the line and do that /8 later...
+				
+				A - Size of Sin table. (Full = 16 signed bit)
+				
+				B1 - Round when accumulating.
+				  OR
+				B2 - Round partially when accumulating, round remaining in second 1D IDCT.
+				  OR
+				B3 - Round when writing into table, full precision accumulator.
+				  OR
+				B4 - Full accumulation in writing for first 1D IDCT, rounding at the end.
+				
+				1/ [C2-Full A-B4] should be considered as reference, should debug a lot of video stream and see if there are any glitch at all.
+					Mame implementation was C1-Trunc A (2D cos table with bit loss)-B4
+				2/ From there on, C1 was standard in emulator, so we consider this variation to be within specs.
+					Check the difference in matrices.
+				3/ Further go down with the all research space (16->8 Bit Sin), degrading from B4 to B2,B3, then B1 (B1 showed signed of bad result with FULL reduction)
+					Check the difference in matrices.
+
+
+05/02/2019 :
+MDEC			C Implementation
+				Found out that if scale = 0, then it is possible to stream an uncompressed (non RLE block).
+				Started to write Stream state machine block in Verilog.
+				Started to write Coefficient multiplier/setup when receiving coefficients from the stream.
+				Started to write IDCT unit in Verilog.
+				
+06/02/2019 :	??? Don't remember ????
+MDEC
+07/02/2019 :	C Implementation behave like HW like system (full IDCT in 512 cycles)
+MDEC
+08/02/2019 :	First write of stream input part in Verilog.
+MDEC
+09/02/2019 :	First write of coefficient computation part in Verilog.
+MDEC			Documentation work again...
+				Install tool chain and build the verilog source in Quartus.
+
+10/02/2019 :	Burnt by ModelSim, my testbench simulation had Flipflop acting like wire. Probably my mistake, but super confused.
+MDEC			Screw that, screw tool chain, let's try verilator.
+				Install WSL, Verilator, bla, bla, bla, Unix, install, command line...
+				No code done or written really for the project itself. But lot of hours sinked in. (5h ?)
+
+12/02/2019 :	Debugged Stream input Verilog part. First time using Verilator.
+MDEC			Verilator looks very nice.
+
+13/02/2019 :	Debugged coef computation Verilog part.
+MDEC			Learned the hard way signed multiplication issue in Verilog.
+
+15/02/2019 :	Completed IDCT implementation. Started the YUV->RGB conversion verilog.
+MDEC			Burnt by Verilator, found out that I was not using correctly the signal propagation 
+				(I had straight output = input signal wire that were not propagated within the same cycle, but behaved like a register due to C code)
+				
+16/02/2019 :	Completed debug of IDCT Module.
+MDEC			(Burnt also by signed multiplication of COS table again & 3 small stupid bugs)
+				Found a few stupid bugs but nothing really hard.
+				Found a bug in stream input when having non consecutive write + wrong logic (forget write signal usage for end of matrix signal).
+				
+17/02/2019 :	Spent sometime looking at GTE specs and possible implementation.
+GTE
+18/02/2019 :	Implemented the flag to reset the loaded/unloaded item of the matrix when entering the 2nd pass of the IDCT.
+MDEC			It will allow loading the next matrix while the 2nd IDCT pass is working for 256 cycles.
+				Exported a flag to tell when the matrix loading is possible or not.
+				
+				TODO :	Have a assert/deassert mecanism that matrix can be loaded.
+						IDCT Set to 1 to signal that now loading is possible until StreamInput ACK loading possible. StreamInput can count until matrix is complete.
+						We do NOT want that StreamInput could keep pushing things (in flight item because latency due to coef compute pipeline).
+						- IDCT Assert that it can receive.
+						- StreamInput ACK, IDCT lower the signal.
+						- StreamInput load matrix, but need to wait to KICK the matrix FULL BIT. <--- (may still be doing PASS 2 in IDCT, do NOT want to trash or miss the streamInput end of matrix signal either !!!)
+						
+19/02/2019 :	Modified C implementation according to the finding of psxdev.ru / No$ according the MDEC decapping / reverse engineering.
+MDEC			There are some area that feel strange, but specs should be ok for now.
+
+20/02/2019 :	Modified loader in C code to export PNG and run huge batch test.
+MDEC			May be not good enough for HW simulation comparison. But at least check all video animation data.
+				Spent time to understand registers. Now, I got fully the HW specs of the I/O and setup.
+
+22/02/2019 :	Implemented computation of YUV2RGB Module.
+MDEC
+23/02/2019 :	Fixed Verilog error & warning in YUV2RGB Module.
+MDEC			Created C Model -> Checked output image with simulator.
+				Then Created a full test coverage of the unit.
+				Seperated computation and pipelining logic in YUV2RGB.
+				
+24/02/2019 :	Implemented Registers and logic. Changed the way IDCT and Coefficient compute unit load now '32 bit word' (unused bit are actually thrown away) and does reading sub word internally. (COS table, Quant Luma/Chroma table)
+					-> Remain FIFO and module instancing.
+					-> Remain FEEDING of input stream unit. (outside of unit)
+				
+				Precision changed in IDCT according to 13 bit COS specs.
+				
+				Implemented RGB to 32 Bit word conversion logic.
+				TODO : - RGB order and byte order need to be checked/fixed.
+						--> Look at emulator source code and get the definitive answer, like 42.
+						
+				Remains to do :
+				TODO : - Implement spec precision enabled IDCT / ComputeCoef
+				TODO : - Handling of fifo, pipeline feeding and handshaking
+				TODO : - Add FIFO in/out
+				TODO : - Instancing all components.
+				TODO : - Handling of coef stream not implemented.
+				
+11/03/2019 : 	Worked on a tool for two weeks and been *very* busy at work. So progress stalled for a while.
+MDEC			Took a few hours to update IDCT block according to know precision specs.
+				
+12/03/2019 :	Modified stream coef computation also to be according to specs.
+MDEC
+15/03/2019 :	Embedded all blocks together... Many stuff are NOT complete yet. (Will update TODO)
+MDEC			TODO REGISTER BLOCK :
+				- Implement input FIFO.
+					- check proper handling of pushing 16 bit stream when FIFO is 32 bit data out.
+				- Counter issue (have two counter internally, seems stupid)
+					- Also, decrementing counter ? Incrementing counter ? (cf. status register) 
+				- State machine does not use counter yet for STREAM LOAD
+				- Default state of DMA transfer (disabled ? Enabled on reset ?)
+				
+				TODO CORE:
+				- Handling of pushing pixel busy bit not used in registers.
+				- General arbitration not clear yet.
+				- Does not OUTPUT the block type ID (0..5, 4 in YOnly mode)
+					INPUT STREAM:
+					- Allow load logic to complete.
+					COMPUTE COEF:
+					- Saturated arithmetic done, but NOT proper SIGNED DIVISION (add last bit) todo.
+					RGB2FIFO:
+					- Not sure about RGB/BGR order and byte order here.
+					- To debug and check. (all possible states)
+				
+				-----------------------------------------------------
+				Around 12 TODOs to complete before first valid tests.
+				Getting there !!!
+				-----------------------------------------------------
+				
+20/03/2019 :	Huge amount of work for 5 days on the GTE to change my mind.
+GTE				- Implemented GTE Unsigned division unit & testbench ALL possible outcome.
+				- Implemented GTE Overflow computation unit.
+				- Implemented GTE overall system in place.
+					- Custom Register FIFOs
+					- CPU Read/Write logic to custom register & register files.
+					- Microcode PC and state management.
+					- Have Register File/Division/Overflow in place.
+					
+21/03/2019 :	Fix compilation of verilog code.
+GTE				Add support for register reading of 16 bit values into computation pipe (READ register file)
+				Support for lead 1/0 Count registers.
+				Support for ORGB / IRGB special registers.
+
+24/03/2019 :	Start to add a computing data path.
+GTE				Fix seperate R/G/B fifos.
+				Add module with implementation of computing data path.
+				Add module with implementation of register files.
+
+31/03/2019 :	Overflow unit is checked, bug fixed with testbench. (not complete due to changes)
+GTE				Fixed with specs change of the overflow unit.
+				Now also provide clamped value according to latest specs understanding.
+				Fixed various verilog small issues (reg instead of wire or opposite).
+				Removed unused signals.
+				Connected proper clamped value to data path write back.
+				
+01/04/2019 :	Started implement microcode concerning :
+GTE				- Write back to IRx/MACx/RGBC Fifo
+				- Flag setup mask.
+				- LM flag overriding.
+				Done : 200/314 (65%), 
+					remains INSTR_RTPT/INSTR_RTPS/INSTR_NCLIP	<-- Different new work needed.
+					        INSTR_DPCT/INSTR_NCDT				<-- Need architecture change to respect original timing.
+							INSTR_MVMVA				<- Different case but no pb
+				
+				TODO next : - case for control bits from ROM value.
+				TODO next : - Support RTPT/RTPS/NCLIP control bits at least. Support MVMVA and leave DPCT/NCDT for later.
+
+04~08/2019 :	On hold due to work, motivation and private availability for the project.
+
+1~14/08/2019 :	Work back again on Microcode generator, define in powerpoint the datapath to meet all timing requirement and
+GTE				support all exotic issues (original bug, special non generic instruction to existing path)
+16/08/2019 :	Work back on generator.
+GTE
+19/08/2019 :	Now fixed all older instructions, implemented new instructions MVMVA.
+GTE				Remain only RTPS/RTPT generator.
+				
+				Plan to work regularly to do the following :
+
+				Generator :
+				- Implement all function into generator.
+				- Better debugging of microcode steps.
+				- Autogeneration of Verilog when possible.
+
+				Verilog :
+				- Complete all design.
+
+				Validation :
+				- Use original gte.c from emulator, compare against verilated implementation.
+				
+				Can probably take up to end of year.
+				
+20~21/08/2019 :	Fixed generator to generate all control signals for the microcode except SZ,SX,SY fifo write.
+GTE				Cleaned all work related to status flags. (Generation and implementation abstract logic, no HDL yet)
+26~30/08/2019 :	Wrote documentation about MDEC, needed for personnal work presentation about my hobbies.
+MDEC			Fixed a bit of Verilog code about computation precision according to specs.
+				Reduced computation precision according to specs.
+31/08/2019 :	Document updated about 'precision' for pass 2. Verilog updated according to lastest specs and finding.
+MDEC			C language implementation modified according to latest computation specification for precision and verified the findings.
+				Test have been on a small test of standard data, no extreme values to test possible issues. 
+				But seems OK : compute path is based on reverse engineering, and remaining information is based on sound logicial deduction.
+				If problem remains, I can only foresee the rounding issue (RLE to IDCT and IDCT to YUV). But those have been reverse engineered too.
+5~7/09/2019 :	MDEC Test started with Verilator.
+MDEC			Did have some issue, found the problem.
+				Also wanted to have waveform visible. Did try verilator feature, just did not work.
+				=> Spent an afternoon writing a Waveform system.
+8~13/09/2019 :	Refresher, took a look at the SPU specs. Started to read, understand the implementation and the 
+SPU	/ Tool		specification of the hardware.
+				Took a look to No$ specs, other specs on the net, read source from various emulator.
+				Ended up also installing Avocado. It was easy to build and now I will have an emulator with full source,
+				easier to build than PCSXR.
