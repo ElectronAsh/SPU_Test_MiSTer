@@ -591,7 +591,8 @@ wire         vbuf_write;
 wire  [23:0] hdmi_data;
 wire         hdmi_vs, hdmi_hs, hdmi_de;
 
-ascal 
+/*
+ascal
 #(
 	.RAMBASE(32'h20000000),
 	.N_DW(128),
@@ -676,6 +677,7 @@ ascal
 	.avl_read         (vbuf_read),
 	.avl_byteenable   (vbuf_byteenable)
 );
+*/
 
 reg        FB_EN     = 0;
 reg        FB_FLT    = 0;

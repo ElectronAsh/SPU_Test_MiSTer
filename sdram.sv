@@ -65,14 +65,18 @@ assign {SDRAM_DQMH,SDRAM_DQML} = SDRAM_A[12:11];
 // no burst configured
 localparam BURST_LENGTH        = 3'b000;   // 000=1, 001=2, 010=4, 011=8
 localparam ACCESS_TYPE         = 1'b0;     // 0=sequential, 1=interleaved
-localparam CAS_LATENCY         = 3'd3;     // 2 for < 100MHz, 3 for >100MHz
 localparam OP_MODE             = 2'b00;    // only 00 (standard operation) allowed
 localparam NO_WRITE_BURST      = 1'b1;     // 0= write burst enabled, 1=only single access write
 localparam MODE                = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
 
-localparam sdram_startup_cycles= 14'd12100;// 100us, plus a little more, @ 100MHz
-localparam cycles_per_refresh  = 14'd780;  // (64000*100)/8192-1 Calc'd as (64ms @ 100MHz)/8192 rose
-//localparam cycles_per_refresh  = 14'd522;  // (64000*67)/8192-1 Calc'd as (64ms @ 67MHz)/8192 rose
+localparam cycles_per_refresh  = 14'd780;		// (64000*100)/8192-1 Calc'd as (64ms @ 100MHz)/8192 rose
+localparam sdram_startup_cycles= 14'd12100;	// 100us, plus a little more, @ 100MHz
+localparam CAS_LATENCY         = 3'd3;			// 2 for < 100MHz, 3 for >100MHz
+
+//localparam cycles_per_refresh  = 14'd520;	// (64000*67)/8192-1 Calc'd as (64ms @ 67MHz)/8192 rose
+//localparam CAS_LATENCY         = 3'd2;     // 2 for < 100MHz, 3 for >100MHz
+
+
 localparam startup_refresh_max = 14'b11111111111111;
 
 // SDRAM commands
@@ -90,6 +94,8 @@ reg [23:0] save_addr;
 
 reg [15:0] data;
 assign dout = data;
+
+(*noprune*) reg [4:0] my_count;
 
 typedef enum
 {
@@ -117,8 +123,10 @@ always @(posedge clk) begin
 
 	data_ready_delay <= {1'b0, data_ready_delay[CAS_LATENCY:1]};
 
-	if(data_ready_delay[0]) {ready, data}  <= {1'b1, SDRAM_DQ};
+	if (data_ready_delay[0]) {ready, data}  <= {1'b1, SDRAM_DQ};
 
+	my_count <= my_count + 5'd1;
+	
 	case(state)
 		STATE_STARTUP: begin
 			SDRAM_A    <= 0;
@@ -164,6 +172,7 @@ always @(posedge clk) begin
 		end
 
 		STATE_IDLE: begin
+			my_count <= 0;
 			// Priority is to issue a refresh if one is outstanding
 			if(refresh_count > (cycles_per_refresh<<1)) state <= STATE_IDLE_1;
 			else if(new_rd | new_we) begin

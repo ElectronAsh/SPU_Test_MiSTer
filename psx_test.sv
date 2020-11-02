@@ -151,7 +151,6 @@ assign LED_DISK  = 0;
 assign LED_POWER = 0;
 
 
-
 wire pll_locked;
 pll pll
 (
@@ -161,9 +160,10 @@ pll pll
 	.outclk_1(clk_66m),
 	.locked(pll_locked)
 );
+(*keep*) wire clk_33m;
+(*keep*) wire clk_66m;
 
 (*keep*) wire clk_sys = clk_33m;
-(*keep*) wire clk_66m;
 
 
 wire [1:0] scale = status[3:2];
@@ -252,6 +252,8 @@ wire reset = RESET;
 `endif
 
 
+// Note: I messed up some of the names here, using the Replace function whilst testing the SPU!... ElectronAsh.
+
 /*
 gpu gpu_inst
 (
@@ -314,7 +316,7 @@ wire validDataOut;
 
 assign bridge_m0_clk = clk_sys;						// output  bridge_m0_clk
 
-wire [31:0] flag_data = {1'b0, SPUINT, SPUDREQ, 28'h0000000 };
+wire [31:0] flag_data = {isFIFOFull, SPUINT, SPUDREQ, 28'h0000000 };
 
 assign bridge_m0_readdata = (bridge_m0_address[3:0]==4'h8) ? flag_data : {SPU_DOUT, SPU_DOUT};		// output [31:0] bridge_m0_readdata
 
@@ -360,7 +362,7 @@ else begin
 				/*case (bridge_m0_address[3:0])
 					4'h0:*/ begin						// Write to GP0.
 						SPU_ADDR <= bridge_m0_address >> 2;
-						SPU_DIN <= bridge_m0_writedata[31:0];
+						SPU_DIN <= bridge_m0_writedata[15:0];
 						SPUCS <= 1'b1;
 						SWRO <= 1'b1;
 						SRD <= 1'b0;
@@ -516,7 +518,9 @@ SPU SPU_inst
 	
 	.AOUTL( AOUTL ) ,	// output [15:0] AOUTL
 	.AOUTR( AOUTR ) ,	// output [15:0] AOUTR
-	.VALIDOUT( VALIDOUT )	// output  VALIDOUT
+	.VALIDOUT( VALIDOUT ) ,	// output  VALIDOUT
+	
+	.isFIFOFull( isFIFOFull )
 );
 
 wire [17:0] SPU_RAM_ADDR;
@@ -681,38 +685,14 @@ else begin
 //	end
 
 
-/*
 	if(old_download & ~ioctl_download) begin
 		loader_en <= 0;
 		ioctl_wait <= 0;
 	end
 	if (RESET) ioctl_wait <= 0;
 end
-*/
 
-
-
-/*
-	.cpu_clken_dbg( cpu_clken_dbg ) ,
-	
-	.fx68k_addr_dbg( fx68k_addr_dbg ) ,
-	
-	.fx68k_as_n_dbg( fx68k_as_n_dbg ) ,
-	
-	.fx68k_din_dbg( fx68k_din_dbg ) ,
-	.fx68k_dout_dbg( fx68k_dout_dbg ) ,
-	
-	.ps2_mouse( ps2_mouse ) ,
-	
-	.mouse_ena_1( status[6:5]==1 ) ,
-	.mouse_ena_2( status[6:5]==2 )
-);
-
-wire cpu_clken_dbg;
-wire fx68k_as_n_dbg;
-wire [23:0] fx68k_addr_dbg;
-wire [15:0] fx68k_din_dbg;
-wire [15:0] fx68k_dout_dbg;
+(*keep*) wire rom_wrack = 1'b1;	// TESTING!!
 */
 
 
@@ -780,64 +760,6 @@ video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0)) video_mixer
 );
 
 
-(*keep*) wire rom_wrack = 1'b1;	// TESTING!!
-
-
-/*
-sdram sdram
-(
-	.init(~pll_locked),
-	
-	.clk( clk_66m ),				// Don't need the phase shift any more. DDIO is used to generate SDRAM_CLK instead (Sorg magic).
-
-	.SDRAM_DQ( SDRAM_DQ ),		// 16 bit bidirectional data bus
-	.SDRAM_A( SDRAM_A ) ,		// 13 bit multiplexed address bus
-	.SDRAM_DQML( SDRAM_DQML ) ,// two byte masks
-	.SDRAM_DQMH( SDRAM_DQMH ) ,// 
-	.SDRAM_BA( SDRAM_BA ),		// two banks
-	.SDRAM_nCS( SDRAM_nCS ),	// a single chip select
-	.SDRAM_nWE( SDRAM_nWE ),	// write enable
-	.SDRAM_nRAS( SDRAM_nRAS ),	// row address select
-	.SDRAM_nCAS( SDRAM_nCAS ),	// columns address select
-	.SDRAM_CKE( SDRAM_CKE ),	// clock enable
-	.SDRAM_CLK( SDRAM_CLK ),	// clock for chip
-	
-	// Port 1.
-//	.ch1_addr( {2'b00, ioctl_addr[24:1]} ),	// 16-bit WORD address!! [26:1]
-//	.ch1_dout(  ),										// output [63:0]
-//	.ch1_rnw( 1'b0 ),									// Write-only for cart loading.
-//	.ch1_be( 8'b11111111 ),							// Byte enable (bits [7:0]) for 64-bit burst writes. TODO
-//	.ch1_din( {ioctl_data[7:0], ioctl_data[15:8]} ),		// input [15:0]	- Data from HPS is BYTE swapped!
-//	.ch1_req( ioctl_download & ioctl_wr & ioctl_index>0 ),	
-//	.ch1_ready( rom_wrack ),
-
-	// Port 1.
-//	.ch1_addr( ch1_addr ),							// 64-bit WORD address. Burst Length=4. On 64-bit boundaries when the lower two bits are b00!!
-//	.ch1_dout( ch1_dout ),							// output [63:0]
-//	.ch1_rnw( ch1_rnw ),								// Read when HIGH. Write when LOW.
-//	.ch1_be( ch1_be ),								// Byte enable (bits [7:0]) for 64-bit burst writes.
-//	.ch1_din( ch1_din ),								// input [63:0]
-//	.ch1_req( ch1_rd_req | ch1_wr_req ),	
-//	.ch1_ready( ch1_ready ),
-	
-	// Port 2.
-//	.ch2_addr( sdram_word_addr ),					// 16-bit WORD address!! [26:1]
-//	.ch2_dout( sdram_dout ),						// output [31:0]
-//	.ch2_rnw( 1'b1 ),									// Read-only for cart ROM reading!
-//	.ch2_din( 16'h0000 ),							// input [15:0]
-//	.ch2_req( !ioctl_download & cart_rd_trig ),
-//	.ch2_ready( sdram_ready ),
-	
-	// Port 3.
-	.ch3_addr( ch3_addr ),						// 16-bit WORD address!! [26:1]
-	.ch3_dout( ch3_dout ),						// output [15:0]
-	.ch3_rnw( ch3_rnw ),
-	.ch3_din( ch3_din ),							// input [15:0]
-	.ch3_req( ch3_req ),
-	.ch3_ready( ch3_ready )
-);
-*/
-
 sdram sdram
 (
    .init( ~pll_locked ) ,			// reset to initialize RAM
@@ -869,12 +791,23 @@ sdram sdram
 (*keep*) wire [23:0] sdram_addr = {7'b0000000, SPU_RAM_ADDR};
 (*keep*) wire [15:0] sdram_din = SPU_RAM_DOUT;
 
-(*keep*) wire [15:0] sdram_dout;
-
 (*keep*) wire sdram_we = SPU_RAM_WR;
 (*keep*) wire sdram_rd = SPU_RAM_RD;
 
 (*keep*) wire sdram_ready;	 // todo?
 
+(*keep*) wire [15:0] sdram_dout;
+
+/*
+spu_bram	spu_bram_inst (
+	.clock ( clk_33m ),
+	
+	.address ( SPU_RAM_ADDR ),
+	.data ( SPU_RAM_DOUT ),		// SPU_RAM_DOUT is FROM the SPU TO RAM!
+	.wren ( SPU_RAM_WR ),
+	
+	.q ( sdram_dout )
+);
+*/
 
 endmodule
