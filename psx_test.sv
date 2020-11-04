@@ -316,16 +316,22 @@ wire validDataOut;
 
 assign bridge_m0_clk = clk_sys;						// output  bridge_m0_clk
 
-wire [31:0] flag_data = {isFIFOFull, SPUINT, SPUDREQ, 28'h0000000 };
+wire [31:0] flag_data = {1'b0, isFIFOFull, SPUINT, SPUDREQ, 28'h0000000 };
 
-assign bridge_m0_readdata = (bridge_m0_address[3:0]==4'h8) ? flag_data : {SPU_DOUT, SPU_DOUT};		// output [31:0] bridge_m0_readdata
+assign bridge_m0_readdata = (bridge_m0_address[3:0]==4'h8) ? flag_data : axi_readdata;		// output [31:0] bridge_m0_readdata
+
+
 
 
 reg axi_wait;
 assign bridge_m0_waitrequest = axi_wait;
 
+reg [31:0] axi_readdata;
+
 reg axi_readvalid;
 assign bridge_m0_readdatavalid = axi_readvalid;
+
+
 
 
 (*noprune*) reg [7:0] cmd_state;
@@ -361,13 +367,18 @@ else begin
 			if (bridge_m0_write) begin
 				/*case (bridge_m0_address[3:0])
 					4'h0:*/ begin						// Write to GP0.
-						SPU_ADDR <= bridge_m0_address >> 2;
-						SPU_DIN <= bridge_m0_writedata[15:0];
-						SPUCS <= 1'b1;
-						SWRO <= 1'b1;
-						SRD <= 1'b0;
-						axi_wait <= 1'b1;
-						cmd_state <= 1;
+						if (bridge_m0_address[13]) begin
+							SPU_NRST <= bridge_m0_writedata[0];
+						end
+						else begin
+							SPU_ADDR <= bridge_m0_address >> 2;
+							SPU_DIN <= bridge_m0_writedata[15:0];
+							SPUCS <= 1'b1;
+							SWRO <= 1'b1;
+							SRD <= 1'b0;
+							axi_wait <= 1'b1;
+							cmd_state <= 1;
+						end
 					end
 
 					/*
@@ -408,12 +419,14 @@ else begin
 			else if (bridge_m0_read) begin
 				/*case (bridge_m0_address[3:0])
 					4'h0:*/ begin						// Read from GP0.
-						SPU_ADDR <= bridge_m0_address >> 2;
-						SPUCS <= 1'b1;
-						SWRO <= 1'b0;
-						SRD <= 1'b1;
-						axi_wait <= 1'b1;
-						cmd_state <= 2;
+						if (!bridge_m0_address[13]) begin	// Only assert SPU control signals when AXI addr bit 13 is low. (0x1fff or below).
+							SPU_ADDR <= bridge_m0_address >> 2;	// Doing this for SignalTap Sanity.
+							SPUCS <= 1'b1;
+							SWRO <= 1'b0;
+							SRD <= 1'b1;
+							axi_wait <= 1'b1;
+						end
+						cmd_state <= 2;							// Need to do this, as AXI still needs to see axi_readvalid for flag reads.
 					end
 					/*
 					4'h4: begin						// Read from GP1.
@@ -449,22 +462,23 @@ else begin
 			SWRO <= 1'b0;
 			SRD <= 1'b0;
 			SPUDACK <= 1'b0;
-			axi_wait <= 1'b0;		// Need to assert this before returning to state 0!
-			cmd_state <= 0;		// (to handle cases when axi_read or axi_write are held high.)
+			axi_wait <= 1'b0;		// Need to DEassert this before returning to state 0!
+			cmd_state <= 0;		// (to handle cases when bridge_m0_read or bridge_m0_write are held high.)
 		end
 		
 		
 		// Read...
 		2: begin
-			SPUCS <= 1'b1;
+			SPUCS <= 1'b0;
 			SWRO <= 1'b0;
 			SRD <= 1'b0;
 			SPUDACK <= 1'b0;
 			
-			//if (validDataOut) begin
+			//if (SPU_DOUT_VALID | bridge_m0_address[13]) begin
+				axi_readdata <= {SPU_DOUT, SPU_DOUT};
 				axi_readvalid <= 1'b1;
-				axi_wait <= 1'b0;		// Need to assert this before returning to state 0!
-				cmd_state <= 0;		// (to handle cases when axi_read or axi_write are held high.)
+				axi_wait <= 1'b0;		// Need to DEassert this before returning to state 0!
+				cmd_state <= 0;		// (to handle cases when bridge_m0_read or bridge_m0_write are held high.)
 			//end
 		end
 	
@@ -523,20 +537,19 @@ SPU SPU_inst
 	.isFIFOFull( isFIFOFull )
 );
 
-wire [17:0] SPU_RAM_ADDR;
-wire SPU_RAM_RD;
-wire SPU_RAM_WR;
-wire [15:0] SPU_RAM_DIN = sdram_dout;
-wire [15:0] SPU_RAM_DOUT;
+(*keep*) wire [17:0] SPU_RAM_ADDR;
+(*keep*) wire SPU_RAM_RD;
+(*keep*) wire SPU_RAM_WR;
+(*keep*) wire [15:0] SPU_RAM_DOUT;
 
-wire [15:0] SPU_CD_INL;
-wire [15:0] SPU_CD_INR;
+(*keep*) wire [15:0] SPU_CD_INL;
+(*keep*) wire [15:0] SPU_CD_INR;
 
-wire [15:0] SPU_INL;
-wire [15:0] SPU_INR;
+(*keep*) wire [15:0] SPU_INL;
+(*keep*) wire [15:0] SPU_INR;
 
-wire [15:0] AOUTL;
-wire [15:0] AOUTR;
+(*keep*) wire [15:0] AOUTL;
+(*keep*) wire [15:0] AOUTR;
 
 
 reg [15:0] SPU_AOUTL;
@@ -759,7 +772,7 @@ video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0)) video_mixer
 	.VGA_DE( VGA_DE )		// output VGA_DE
 );
 
-
+/*
 sdram sdram
 (
    .init( ~pll_locked ) ,			// reset to initialize RAM
@@ -795,19 +808,39 @@ sdram sdram
 (*keep*) wire sdram_rd = SPU_RAM_RD;
 
 (*keep*) wire sdram_ready;	 // todo?
-
 (*keep*) wire [15:0] sdram_dout;
+wire [15:0] SPU_RAM_DIN = sdram_dout;
+*/
 
 /*
+SPU_RAM SPU_RAM_inst
+(
+	.i_clk( clk_sys ) ,				// input  i_clk
+	.i_data( SPU_RAM_DOUT ) ,		// input [15:0] i_data   SPU_RAM_DOUT is FROM the SPU TO RAM!
+	.i_wordAddr( SPU_RAM_ADDR ) ,	// input [17:0] i_wordAddr
+	.i_re( SPU_RAM_RD ) ,			// input  i_re
+	.i_we( SPU_RAM_WR ) ,			// input  i_we
+	.i_byteSelect( 2'b11 ) ,		// input [1:0] i_byteSelect
+	.o_q( SPU_RAM_DIN ) 				// output [15:0] o_q     SPU_RAM_DIN is FROM the RAM to the SPU!
+);
+(*keep*) wire [15:0] SPU_RAM_DIN;
+*/
+
+
 spu_bram	spu_bram_inst (
-	.clock ( clk_33m ),
+	.clock ( !clk_sys ),			// TESTING !!! Inverted clock.
 	
 	.address ( SPU_RAM_ADDR ),
+	
 	.data ( SPU_RAM_DOUT ),		// SPU_RAM_DOUT is FROM the SPU TO RAM!
 	.wren ( SPU_RAM_WR ),
 	
-	.q ( sdram_dout )
+	.rden ( SPU_RAM_RD ),
+	.q ( SPU_RAM_DIN )			// SPU_RAM_DIN is FROM the RAM to the SPU!
 );
-*/
+
+(*keep*) wire [15:0] SPU_RAM_DIN;
+
+
 
 endmodule

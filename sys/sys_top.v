@@ -737,6 +737,7 @@ always @(posedge clk_vid) begin
 	endcase
 end
 
+
 wire [15:0] lltune;
 
 pll_hdmi_adj pll_hdmi_adj
@@ -792,7 +793,6 @@ fbpal fbpal
 
 /////////////////////////  HDMI output  /////////////////////////////////
 
-wire hdmi_clk_out;
 pll_hdmi pll_hdmi
 (
 	.refclk(FPGA_CLK1_50),
@@ -801,6 +801,8 @@ pll_hdmi pll_hdmi
 	.reconfig_from_pll(reconfig_from_pll),
 	.outclk_0(hdmi_clk_out)
 );
+
+wire hdmi_clk_out;
 
 //1920x1080@60 PCLK=148.5MHz CEA
 reg  [11:0] WIDTH  = 1920;
@@ -811,6 +813,8 @@ reg  [11:0] HEIGHT = 1080;
 reg  [11:0] VFP    = 4;
 reg  [11:0] VS     = 5;
 reg  [11:0] VBP    = 36;
+
+
 
 wire [63:0] reconfig_to_pll;
 wire [63:0] reconfig_from_pll;
@@ -865,6 +869,7 @@ always @(posedge FPGA_CLK1_50) begin
 	old_wait <= adj_waitrequest;
 	if(old_wait & ~adj_waitrequest & gotd) cfg_ready <= 1;
 end
+
 
 wire hdmi_config_done;
 hdmi_config hdmi_config
@@ -1064,6 +1069,7 @@ osd vga_osd
 	.vs_out(vga_vs_osd)
 );
 
+
 wire vga_cs_osd;
 csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 
@@ -1077,19 +1083,22 @@ csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 		.din(vga_scaler ? {24{hdmi_de_osd}} & hdmi_data_osd : vga_data_osd)
 	);
 
+
 	wire hdmi_cs_osd;
 	csync csync_hdmi(clk_hdmi, hdmi_hs_osd, hdmi_vs_osd, hdmi_cs_osd);
 
 	wire vs1 = vga_scaler ? hdmi_vs_osd : vga_vs_osd;
 	wire hs1 = vga_scaler ? hdmi_hs_osd : vga_hs_osd;
-	wire cs1 = vga_scaler ? hdmi_cs_osd : vga_cs_osd;
 
+	wire cs1 = vga_scaler ? hdmi_cs_osd : vga_cs_osd;
+	
 	assign VGA_VS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? 1'b1 : ~vs1;
 	assign VGA_HS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? ~cs1 : ~hs1;
 	assign VGA_R  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[23:18];
 	assign VGA_G  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[15:10];
 	assign VGA_B  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[7:2];
 `endif
+
 
 /////////////////////////  Audio output  ////////////////////////////////
 
